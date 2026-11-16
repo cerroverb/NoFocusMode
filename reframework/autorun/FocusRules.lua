@@ -32,6 +32,7 @@ local settings = {
     wounds_only_while_focus_held = true,
     hide_focus_reticle = true,
     no_target_pull = true,
+    no_strike_turn_to_camera = true,
     rising_spiral_slash = true,
     strike_on_r1_alone = false,
 }
@@ -125,7 +126,9 @@ local focus_button_held = false
 -- of these after the strike press was sent, the game has not started the strike yet.
 local FOCUS_STANCE_ACTIONS = { cAimIdle = true, cAimIdleHigh = true, cAimWalk = true, cAimWalkStop = true }
 
-local strike = { frames_left = 0, pending = false, sent = false, start_action = nil, key_index = PAD_KEY_FOCUS_STRIKE }
+-- action: the action the strike turned into, kept until the hunter leaves it.
+local strike = { frames_left = 0, pending = false, sent = false, start_action = nil, key_index = PAD_KEY_FOCUS_STRIKE,
+    action = nil }
 
 local function current_action_name(hunter)
     local action = hunter:get_BaseActionController():get_CurrentAction()
@@ -138,8 +141,14 @@ local function reset_strike()
     strike.sent = false
 end
 
--- Calls blocked by "No pull towards the target" during the current strike, logged when it ends.
-local target_pull_blocks = {}
+-- Calls blocked during the current strike, by method name, logged when the strike action ends.
+local strike_blocks = {}
+
+-- Direction the hunter faces, in degrees around the vertical axis, for the log.
+local function facing_degrees(hunter)
+    local forward = hunter:get_GameObject():get_Transform():get_AxisZ()
+    return math.deg(math.atan(forward.x, forward.z))
+end
 
 local function start_strike_window(hunter, input, key_index)
     strike.frames_left = STRIKE_WINDOW_FRAMES
@@ -148,8 +157,10 @@ local function start_strike_window(hunter, input, key_index)
     strike.start_action = current_action_name(hunter)
     strike.key_index = key_index
     input:getKey(key_index):clear()
-    target_pull_blocks = {}
-    log_line(string.format("strike armed during %s key %d", strike.start_action, key_index))
+    strike.action = nil
+    strike_blocks = {}
+    log_line(string.format("strike armed during %s key %d facing %.0f", strike.start_action, key_index,
+        facing_degrees(hunter)))
 end
 
 local function send_strike_press(strike_key)
@@ -172,11 +183,8 @@ local function hold_focus_for_strike(hunter, focus_key, strike_key)
     if strike.sent and action ~= strike.start_action and not FOCUS_STANCE_ACTIONS[action] then
         strike.pending = false
         strike.frames_left = math.min(strike.frames_left, FRAMES_AFTER_STRIKE)
-        local blocked = {}
-        for name, count in pairs(target_pull_blocks) do
-            table.insert(blocked, name .. "=" .. count)
-        end
-        log_line("strike ended in " .. action .. " target pull blocked " .. table.concat(blocked, " "))
+        strike.action = action
+        log_line(string.format("strike ended in %s facing %.0f", action, facing_degrees(hunter)))
     elseif hunter:get_HunterContext():get_IsAim() then
         send_strike_press(strike_key)
     end
@@ -216,6 +224,17 @@ local function focus_move_pressed(hunter, input)
     return nil
 end
 
+local function track_strike_action(hunter)
+    if not strike.action or current_action_name(hunter) == strike.action then return end
+    local blocked = {}
+    for name, count in pairs(strike_blocks) do
+        table.insert(blocked, name .. "=" .. count)
+    end
+    log_line(string.format("strike action %s done facing %.0f, blocked %s", strike.action, facing_degrees(hunter),
+        table.concat(blocked, " ")))
+    strike.action = nil
+end
+
 -- The command controller merges pad and keyboard input here, before the game reads its commands.
 local merging_controller = nil
 
@@ -234,6 +253,7 @@ end, function(retval)
         log_attack_presses(input)
     end
 
+    track_strike_action(hunter)
     if not settings.focus_strike_only or not is_master_melee_drawn(hunter) then
         reset_strike()
         return retval
@@ -295,7 +315,7 @@ sdk.hook(hunter_type:get_method("rotateAimTurnLook_WpOffset"), skip_aim_turn_rot
 -- with this switch on no target is set and the strike moves the way its animation does.
 local function block_target_pull(hunter, name)
     if not settings.no_target_pull or not is_master_melee(hunter) then return end
-    target_pull_blocks[name] = (target_pull_blocks[name] or 0) + 1
+    strike_blocks[name] = (strike_blocks[name] or 0) + 1
     return sdk.PreHookResult.SKIP_ORIGINAL
 end
 
@@ -310,6 +330,63 @@ sdk.hook(sdk.find_type_definition("app.PlayerCommonActionComponent.acAimTargetHo
     function(args)
         return block_target_pull(sdk.to_managed_object(args[2]):get_Chara(), "updateTargetPos")
     end)
+
+-- On the Sword and Shield, Hammer, Hunting Horn, Lance and Gunlance the Focus Strike action turns the
+-- hunter to the camera itself instead of through rotateAimTurnLook. While a strike is starting or
+-- playing, the direction-taking turn requests of the hunter and of the strike action
+-- (cHunterActionBase.turnDirection and startAngleYRotToTarget) are skipped. With logging on, every
+-- call is counted, and the hunter's facing is logged when the strike is armed, starts and ends.
+-- app.WeaponDef.TYPE SHORT_SWORD, HAMMER, WHISTLE, LANCE, GUN_LANCE
+local STRIKE_TURNS_TO_CAMERA = { [1] = true, [4] = true, [5] = true, [6] = true, [7] = true }
+
+local function is_master_melee_striking(hunter)
+    return is_master_melee(hunter) and (strike.frames_left > 0 or strike.action ~= nil)
+end
+
+local function is_camera_turning_strike(hunter)
+    return is_master_melee_striking(hunter) and STRIKE_TURNS_TO_CAMERA[hunter:get_WeaponType()] == true
+end
+
+local function count_strike_call(name)
+    strike_blocks[name] = (strike_blocks[name] or 0) + 1
+end
+
+for _, method_name in ipairs({ "turnDirection_MotionSequence", "requestInertialTurn",
+    "setAngleYRotatorDampingTarget" }) do
+    sdk.hook(hunter_type:get_method(method_name), function(args)
+        if not settings.no_strike_turn_to_camera or not is_camera_turning_strike(hunter_from_args(args)) then return end
+        count_strike_call(method_name)
+        return sdk.PreHookResult.SKIP_ORIGINAL
+    end)
+end
+
+-- Logged only, to see whether they take part in the turn.
+for _, method_name in ipairs({ "startAngleYRotator", "onGunnerAimAdjust", "beginGunnerAimAdjustInterpolate" }) do
+    sdk.hook(hunter_type:get_method(method_name), function(args)
+        if settings.log_state and is_master_melee_striking(hunter_from_args(args)) then
+            count_strike_call(method_name .. "(seen)")
+        end
+    end)
+end
+
+local hunter_action_type = sdk.find_type_definition("app.cHunterActionBase")
+
+for _, method_name in ipairs({ "turnDirection", "startAngleYRotToTarget" }) do
+    sdk.hook(hunter_action_type:get_method(method_name), function(args)
+        local hunter = sdk.to_managed_object(args[2]):get_Chara()
+        if not settings.no_strike_turn_to_camera or not is_camera_turning_strike(hunter) then return end
+        count_strike_call("action." .. method_name)
+        return sdk.PreHookResult.SKIP_ORIGINAL
+    end)
+end
+
+for _, method_name in ipairs({ "turnDirectionInputDir", "calcSightDir" }) do
+    sdk.hook(hunter_action_type:get_method(method_name), function(args)
+        if settings.log_state and is_master_melee_striking(sdk.to_managed_object(args[2]):get_Chara()) then
+            count_strike_call("action." .. method_name .. "(seen)")
+        end
+    end)
+end
 
 -- Reticle panels shown while the script holds Focus Mode on for a strike. kmy0's HudController maps
 -- the focus reticle (UI020002) onto the general reticle HUD (UI020000) in data/ace.lua
@@ -478,6 +555,7 @@ re.on_draw_ui(function()
     setting_checkbox("Show wounds only while L2 is held", "wounds_only_while_focus_held")
     setting_checkbox("Hide the focus reticle (melee, weapon drawn)", "hide_focus_reticle")
     setting_checkbox("No pull towards the target on Focus Strikes (melee)", "no_target_pull")
+    setting_checkbox("Focus Strikes go where the hunter faces, not the camera (Sword and Shield, Hammer, Hunting Horn, Lance, Gunlance)", "no_strike_turn_to_camera")
     setting_checkbox("L2 + B does the Rising Spiral Slash (Insect Glaive charged attack, three extracts)", "rising_spiral_slash")
     setting_checkbox("R1 alone does the Focus Strike, R1 no longer sheathes (melee, weapon drawn)", "strike_on_r1_alone")
     setting_checkbox("Log focus state (applies after Reset scripts)", "log_state")
