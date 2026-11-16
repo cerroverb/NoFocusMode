@@ -8,9 +8,9 @@
 -- does the Rising Spiral Slash.
 -- Ranged weapons and a sheathed weapon keep the game's behavior.
 -- Switches are in the REFramework menu under "Focus Rules" and are saved to reframework/data/FocusRules.json.
--- With "Log focus state" on, focus state, the focus button and actions are written to re2_framework_log.txt.
--- Logging is off by default. Its per-character hook is only installed when it
--- is on at script load.
+-- With "Log focus state" on, Focus Strike presses, actions and focus state are written to
+-- re2_framework_log.txt. Logging is off by default, and its hook is only installed when it is on at
+-- script load.
 --
 -- Method names come from the game's il2cpp_dump.json (REFramework SDK dump).
 -- Hook patterns follow Bimmr's MHWS-Weapon-Swapper (HunterCharacter.update, get_IsMaster,
@@ -22,6 +22,8 @@
 -- app.cEnemyLoopEffectHighlight._IsAim from a hook on isActivate(), and hiding the reticle follows its
 -- slinger_reticle element (findDisplayControl, _TargetControl, set_ForceInvisible):
 -- https://github.com/kmy0/HudController
+-- The game's Focus Strike command (app.PlayerCommand.TYPE AIM_SP_B) and app.PlayerUtil.checkCommandResult
+-- come from lingsamuel's Smart Focus Attack (Nexus Mods 75) and its _CatLib fsm.lua.
 
 local CONFIG_PATH = "FocusRules.json"
 
@@ -94,11 +96,7 @@ local hide_focus_reticle_now = false
 
 re.on_frame(function()
     local master = get_master_hunter()
-    local address = master and master:get_address() or nil
-    if address ~= master_hunter_address then
-        log_line("master hunter " .. (address and string.format("%x", address) or "none"))
-    end
-    master_hunter_address = address
+    master_hunter_address = master and master:get_address() or nil
     local melee_drawn = master ~= nil and is_melee(master) and master:get_IsWeaponOn()
     hide_focus_reticle_now = settings.hide_focus_reticle and settings.focus_strike_only and melee_drawn
 end)
@@ -122,9 +120,16 @@ end
 -- Focus button state as the player pressed it, read before this script changes it.
 local focus_button_held = false
 
--- Focus Mode stance actions every weapon has. While the hunter is still in one
--- of these after the strike press was sent, the game has not started the strike yet.
-local FOCUS_STANCE_ACTIONS = { cAimIdle = true, cAimIdleHigh = true, cAimWalk = true, cAimWalkStop = true }
+-- While the hunter is in one of these actions after the strike press was sent, the game has not
+-- started the strike yet: standing or moving, or a Focus Mode stance. Besides cAimIdle and cAimWalk
+-- every weapon has, some have their own stances, such as the Switch Axe's cSwordAimWalk and the
+-- Charge Blade's cAxeAimIdle.
+local NOT_STARTED_ACTIONS = { cIdle = true, cIdleTurn = true, cMove = true, cMoveStop = true, cMoveTurn = true }
+
+local function is_strike_not_started(action)
+    return NOT_STARTED_ACTIONS[action] or (action:find("Aim", 1, true) ~= nil
+        and (action:find("Idle", 1, true) ~= nil or action:find("Walk", 1, true) ~= nil))
+end
 
 -- action: the action the strike turned into, kept until the hunter leaves it.
 local strike = { frames_left = 0, pending = false, sent = false, start_action = nil, key_index = PAD_KEY_FOCUS_STRIKE,
@@ -141,15 +146,6 @@ local function reset_strike()
     strike.sent = false
 end
 
--- Calls blocked during the current strike, by method name, logged when the strike action ends.
-local strike_blocks = {}
-
--- Direction the hunter faces, in degrees around the vertical axis, for the log.
-local function facing_degrees(hunter)
-    local forward = hunter:get_GameObject():get_Transform():get_AxisZ()
-    return math.deg(math.atan(forward.x, forward.z))
-end
-
 local function start_strike_window(hunter, input, key_index)
     strike.frames_left = STRIKE_WINDOW_FRAMES
     strike.pending = true
@@ -158,9 +154,7 @@ local function start_strike_window(hunter, input, key_index)
     strike.key_index = key_index
     input:getKey(key_index):clear()
     strike.action = nil
-    strike_blocks = {}
-    log_line(string.format("strike armed during %s key %d facing %.0f", strike.start_action, key_index,
-        facing_degrees(hunter)))
+    log_line(string.format("strike armed during %s key %d", strike.start_action, key_index))
 end
 
 local function send_strike_press(strike_key)
@@ -172,36 +166,60 @@ local function send_strike_press(strike_key)
     strike.sent = true
 end
 
+-- The game's Focus Strike command, app.PlayerCommand.TYPE AIM_SP_B.
+local FOCUS_STRIKE_COMMAND = 63
+-- app.cPlayerCommandInput.INPUT_SECTION: the part of the current action a press was made in.
+local SECTION_NORMAL = 0
+
+-- The game keeps a press made in the pre-cancel or cancel part of an action and starts the strike
+-- as soon as the action can be cancelled. A press made earlier in an attack or dodge, in its normal
+-- part, is used up as an ordinary press and dropped. Standing, moving and the Focus Mode stance take
+-- a press in their normal part. Returns true for a press the game will drop.
+local function game_drops_press(controller, action)
+    if strike.key_index ~= PAD_KEY_FOCUS_STRIKE or is_strike_not_started(action) then return false end
+    local command_list = controller._CommandHolder:get_CommandList()
+    for i = 0, command_list:get_size() - 1 do
+        local command_input = command_list:get_element(i)
+        if command_input.CommandIndex == FOCUS_STRIKE_COMMAND then
+            local input_info = command_input._InputInfo
+            for j = 0, input_info:get_size() - 1 do
+                local info = input_info:get_element(j)
+                if info:get_field("_Pushed") then
+                    return info:get_field("_Section") == SECTION_NORMAL
+                end
+            end
+        end
+    end
+    return false
+end
+
 -- Keeps Focus Mode on for the game and sends the press once Focus Mode is active. The press is sent
--- again each frame until the hunter leaves the action it was in and the Focus Mode stance actions.
-local function hold_focus_for_strike(hunter, focus_key, strike_key)
+-- again each frame until the hunter leaves the action it was in for one that is not standing,
+-- moving or a Focus Mode stance.
+local function hold_focus_for_strike(hunter, focus_key, strike_key, controller)
     strike.frames_left = strike.frames_left - 1
     focus_key:set_On(true)
     if not strike.pending then return end
 
     local action = current_action_name(hunter)
-    if strike.sent and action ~= strike.start_action and not FOCUS_STANCE_ACTIONS[action] then
+    if strike.sent and action ~= strike.start_action and not is_strike_not_started(action) then
         strike.pending = false
         strike.frames_left = math.min(strike.frames_left, FRAMES_AFTER_STRIKE)
         strike.action = action
-        log_line(string.format("strike ended in %s facing %.0f", action, facing_degrees(hunter)))
+        log_line("strike ended in " .. action)
+    elseif strike.sent and game_drops_press(controller, action) then
+        -- Too early. Like the game, drop the strike, and let go of Focus Mode right away so the hunter
+        -- does not end up in the Focus Mode stance.
+        log_line("strike press too early during " .. action .. ", ignored")
+        reset_strike()
+        focus_key:clear()
+        strike_key:clear()
+        return
     elseif hunter:get_HunterContext():get_IsAim() then
         send_strike_press(strike_key)
     end
     if strike.frames_left == 0 and strike.pending then
         log_line("strike window ended in " .. action)
-    end
-end
-
--- app.PlayerKey.PAD ATTACK_00 to ATTACK_SP_B, logged while the focus button is held to confirm
--- which one the game uses for Focus Strikes.
-local ATTACK_KEYS = { 0, 1, 2, 3 }
-
-local function log_attack_presses(input)
-    for _, key_index in ipairs(ATTACK_KEYS) do
-        if input:getKey(key_index):get_OnTrigger() then
-            log_line("attack key " .. key_index .. " pressed with focus button held")
-        end
     end
 end
 
@@ -225,14 +243,36 @@ local function focus_move_pressed(hunter, input)
 end
 
 local function track_strike_action(hunter)
-    if not strike.action or current_action_name(hunter) == strike.action then return end
-    local blocked = {}
-    for name, count in pairs(strike_blocks) do
-        table.insert(blocked, name .. "=" .. count)
+    if strike.action and current_action_name(hunter) ~= strike.action then
+        strike.action = nil
     end
-    log_line(string.format("strike action %s done facing %.0f, blocked %s", strike.action, facing_degrees(hunter),
-        table.concat(blocked, " ")))
-    strike.action = nil
+end
+
+-- Whether the hunter's current action takes a Focus Strike right now. An action that can be
+-- cancelled into a Focus Strike asks the game every frame whether the Focus Strike command
+-- (app.PlayerCommand.TYPE AIM_SP_B) was given, through app.PlayerUtil.checkCommandResult. An action
+-- that cannot, such as drawing the weapon, does not ask, and the game drops a press made then. The
+-- mod does the same: a press while the game is not asking is ignored, and Focus Mode is not turned on.
+-- Standing and moving with some weapons, such as the Hammer and the Lance, only ask for Focus Mode
+-- (AIM). There the strike comes from the Focus Mode stance, which then asks for the Focus Strike.
+local FOCUS_MODE_COMMAND = 61
+local input_frame = 0
+local asked_frame = { [FOCUS_MODE_COMMAND] = -1, [FOCUS_STRIKE_COMMAND] = -1 }
+
+sdk.hook(sdk.find_type_definition("app.PlayerUtil"):get_method("checkCommandResult"), function(args)
+    local command_type = sdk.to_int64(args[4]) & 0xFFFFFFFF
+    if asked_frame[command_type] and is_master_hunter(sdk.to_managed_object(args[2]):get_Character()) then
+        asked_frame[command_type] = input_frame
+    end
+end)
+
+local function game_asks_for(command_type)
+    return input_frame - asked_frame[command_type] <= 1
+end
+
+local function game_takes_focus_strike_now(action)
+    return game_asks_for(FOCUS_STRIKE_COMMAND)
+        or (NOT_STARTED_ACTIONS[action] and game_asks_for(FOCUS_MODE_COMMAND))
 end
 
 -- The command controller merges pad and keyboard input here, before the game reads its commands.
@@ -246,12 +286,10 @@ end, function(retval)
     local hunter = controller and controller:get_Character()
     if not is_master_hunter(hunter) then return retval end
 
+    input_frame = input_frame + 1
     local input = controller:get_MergedVirtualInput()
     local focus_key = input:getKey(PAD_KEY_FOCUS)
     focus_button_held = focus_key:get_On()
-    if focus_button_held then
-        log_attack_presses(input)
-    end
 
     track_strike_action(hunter)
     if not settings.focus_strike_only or not is_master_melee_drawn(hunter) then
@@ -260,12 +298,15 @@ end, function(retval)
     end
     if strike.frames_left == 0 then
         local key_index = focus_move_pressed(hunter, input)
-        if key_index then
+        if key_index == PAD_KEY_FOCUS_STRIKE and not game_takes_focus_strike_now(current_action_name(hunter)) then
+            input:getKey(key_index):clear()
+            log_line("strike press ignored, no Focus Strike possible during " .. current_action_name(hunter))
+        elseif key_index then
             start_strike_window(hunter, input, key_index)
         end
     end
     if strike.frames_left > 0 then
-        hold_focus_for_strike(hunter, focus_key, input:getKey(strike.key_index))
+        hold_focus_for_strike(hunter, focus_key, input:getKey(strike.key_index), controller)
     else
         focus_key:clear()
     end
@@ -280,7 +321,6 @@ sdk.hook(sdk.find_type_definition("app.HunterCharacter"):get_method("beginAction
     local plain_turn = START_TURN_FOR_AIM[turn_type]
     if plain_turn then
         args[4] = sdk.to_ptr(plain_turn)
-        log_line(string.format("start turn %d -> %d", turn_type, plain_turn))
     end
 end)
 
@@ -313,29 +353,28 @@ sdk.hook(hunter_type:get_method("rotateAimTurnLook_WpOffset"), skip_aim_turn_rot
 -- the weapon handling) and keeps tracking it during the attack (acAimTargetHold.updateTargetPos).
 -- Analysis of the SDK dump points to that target as the source of the pull towards the wound, so
 -- with this switch on no target is set and the strike moves the way its animation does.
-local function block_target_pull(hunter, name)
-    if not settings.no_target_pull or not is_master_melee(hunter) then return end
-    strike_blocks[name] = (strike_blocks[name] or 0) + 1
-    return sdk.PreHookResult.SKIP_ORIGINAL
+local function block_target_pull(hunter)
+    if settings.no_target_pull and is_master_melee(hunter) then
+        return sdk.PreHookResult.SKIP_ORIGINAL
+    end
 end
 
 local weapon_handling_type = sdk.find_type_definition("app.cHunterWeaponHandlingBase")
 for _, method_name in ipairs({ "decideAimAttackSightPos", "onAimAttackTargetDecided" }) do
     sdk.hook(weapon_handling_type:get_method(method_name), function(args)
-        return block_target_pull(sdk.to_managed_object(args[2]):get_Hunter(), method_name)
+        return block_target_pull(sdk.to_managed_object(args[2]):get_Hunter())
     end)
 end
 
 sdk.hook(sdk.find_type_definition("app.PlayerCommonActionComponent.acAimTargetHold"):get_method("updateTargetPos"),
     function(args)
-        return block_target_pull(sdk.to_managed_object(args[2]):get_Chara(), "updateTargetPos")
+        return block_target_pull(sdk.to_managed_object(args[2]):get_Chara())
     end)
 
 -- On the Sword and Shield, Hammer, Hunting Horn, Lance and Gunlance the Focus Strike action turns the
 -- hunter to the camera itself instead of through rotateAimTurnLook. While a strike is starting or
 -- playing, the direction-taking turn requests of the hunter and of the strike action
--- (cHunterActionBase.turnDirection and startAngleYRotToTarget) are skipped. With logging on, every
--- call is counted, and the hunter's facing is logged when the strike is armed, starts and ends.
+-- (cHunterActionBase.turnDirection and startAngleYRotToTarget) are skipped.
 -- app.WeaponDef.TYPE SHORT_SWORD, HAMMER, WHISTLE, LANCE, GUN_LANCE
 local STRIKE_TURNS_TO_CAMERA = { [1] = true, [4] = true, [5] = true, [6] = true, [7] = true }
 
@@ -347,44 +386,23 @@ local function is_camera_turning_strike(hunter)
     return is_master_melee_striking(hunter) and STRIKE_TURNS_TO_CAMERA[hunter:get_WeaponType()] == true
 end
 
-local function count_strike_call(name)
-    strike_blocks[name] = (strike_blocks[name] or 0) + 1
+local function skip_strike_turn(hunter)
+    if settings.no_strike_turn_to_camera and is_camera_turning_strike(hunter) then
+        return sdk.PreHookResult.SKIP_ORIGINAL
+    end
 end
 
 for _, method_name in ipairs({ "turnDirection_MotionSequence", "requestInertialTurn",
     "setAngleYRotatorDampingTarget" }) do
     sdk.hook(hunter_type:get_method(method_name), function(args)
-        if not settings.no_strike_turn_to_camera or not is_camera_turning_strike(hunter_from_args(args)) then return end
-        count_strike_call(method_name)
-        return sdk.PreHookResult.SKIP_ORIGINAL
-    end)
-end
-
--- Logged only, to see whether they take part in the turn.
-for _, method_name in ipairs({ "startAngleYRotator", "onGunnerAimAdjust", "beginGunnerAimAdjustInterpolate" }) do
-    sdk.hook(hunter_type:get_method(method_name), function(args)
-        if settings.log_state and is_master_melee_striking(hunter_from_args(args)) then
-            count_strike_call(method_name .. "(seen)")
-        end
+        return skip_strike_turn(hunter_from_args(args))
     end)
 end
 
 local hunter_action_type = sdk.find_type_definition("app.cHunterActionBase")
-
 for _, method_name in ipairs({ "turnDirection", "startAngleYRotToTarget" }) do
     sdk.hook(hunter_action_type:get_method(method_name), function(args)
-        local hunter = sdk.to_managed_object(args[2]):get_Chara()
-        if not settings.no_strike_turn_to_camera or not is_camera_turning_strike(hunter) then return end
-        count_strike_call("action." .. method_name)
-        return sdk.PreHookResult.SKIP_ORIGINAL
-    end)
-end
-
-for _, method_name in ipairs({ "turnDirectionInputDir", "calcSightDir" }) do
-    sdk.hook(hunter_action_type:get_method(method_name), function(args)
-        if settings.log_state and is_master_melee_striking(sdk.to_managed_object(args[2]):get_Chara()) then
-            count_strike_call("action." .. method_name .. "(seen)")
-        end
+        return skip_strike_turn(sdk.to_managed_object(args[2]):get_Chara())
     end)
 end
 
@@ -416,9 +434,6 @@ local function apply_focus_reticle_visibility(display_manager)
             display_control._TargetControl:set_ForceInvisible(hide_focus_reticle_now)
         end
     end
-    if focus_reticle_hidden ~= hide_focus_reticle_now then
-        log_line("focus reticle hidden=" .. tostring(hide_focus_reticle_now))
-    end
     focus_reticle_hidden = hide_focus_reticle_now
 end
 
@@ -432,69 +447,21 @@ local function apply_strike_panel_visibility(display_manager)
     strike_panel_hidden = hide
 end
 
--- With logging on: logs every HUD panel that turns visible or invisible while a melee weapon is
--- drawn.
-local hud_panel_visible = {}
-
-local function log_hud_panel_changes(display_manager)
-    local display_controls = display_manager._DisplayControls
-    for i = 0, display_controls:get_Count() - 1 do
-        local display_control = display_controls:get_Item(i)
-        local control = display_control._TargetControl
-        if control then
-            local name = display_control._Owner:get_type_definition():get_name()
-            local visible = display_control:isHudVisible() and control:get_ActualVisible()
-            if hud_panel_visible[name] ~= nil and hud_panel_visible[name] ~= visible then
-                log_line(string.format("hud %s visible=%s", name, tostring(visible)))
-            end
-            hud_panel_visible[name] = visible
-        end
-    end
-end
-
 sdk.hook(sdk.find_type_definition("app.GUIManager"):get_method("lateUpdateApp"), nil, function(retval)
     local display_manager = get_hud_display_manager()
     if not display_manager then return retval end
     apply_focus_reticle_visibility(display_manager)
     apply_strike_panel_visibility(display_manager)
-    if settings.log_state and hide_focus_reticle_now then
-        log_hud_panel_changes(display_manager)
-    end
     return retval
 end)
 
 local highlight_effect = nil
--- With logging on: once per second, how often the game asked for the wound highlight, how often its
--- own answer was "on", and what this script answered.
-local highlight_counts = { calls = 0, game_on = 0, script_on = 0, since = 0 }
-
-local function log_highlight_counts()
-    local now = os.clock()
-    if now - highlight_counts.since < 1 then return end
-    if highlight_counts.calls > 0 then
-        log_line(string.format("wound highlight calls=%d game_on=%d script_on=%d focus_button=%s",
-            highlight_counts.calls, highlight_counts.game_on, highlight_counts.script_on,
-            tostring(focus_button_held)))
-    end
-    highlight_counts.calls, highlight_counts.game_on, highlight_counts.script_on = 0, 0, 0
-    highlight_counts.since = now
-end
 
 sdk.hook(sdk.find_type_definition("app.cEnemyLoopEffectHighlight"):get_method("isActivate"), function(args)
     highlight_effect = sdk.to_managed_object(args[2])
 end, function(retval)
     local effect = highlight_effect
     highlight_effect = nil
-    if settings.log_state then
-        highlight_counts.calls = highlight_counts.calls + 1
-        if (sdk.to_int64(retval) & 1) == 1 then
-            highlight_counts.game_on = highlight_counts.game_on + 1
-        end
-        if settings.wounds_only_while_focus_held and focus_button_held then
-            highlight_counts.script_on = highlight_counts.script_on + 1
-        end
-        log_highlight_counts()
-    end
     if not settings.wounds_only_while_focus_held or not effect then return retval end
     effect._IsAim = focus_button_held
     return sdk.to_ptr(focus_button_held and 1 or 0)
