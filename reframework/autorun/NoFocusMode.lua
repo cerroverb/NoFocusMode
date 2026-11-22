@@ -112,18 +112,11 @@ end
 -- and only the address is kept, so no hook calls into an object from an earlier frame.
 local master_hunter_address = nil
 local hide_focus_reticle_now = false
--- While this is true the script leaves the master's Gunlance to the game, as it does a ranged weapon.
-local master_in_wyverns_fire = false
 
 re.on_frame(function()
     local master = get_master_hunter()
     master_hunter_address = master and master:get_address() or nil
-    local in_wyverns_fire = master ~= nil and is_wyverns_fire(master)
-    if in_wyverns_fire ~= master_in_wyverns_fire then
-        log_line("Wyvern's Fire aiming " .. (in_wyverns_fire and "on" or "off"))
-    end
-    master_in_wyverns_fire = in_wyverns_fire
-    local melee_drawn = master ~= nil and is_melee(master) and not in_wyverns_fire and master:get_IsWeaponOn()
+    local melee_drawn = master ~= nil and is_melee(master) and not is_wyverns_fire(master) and master:get_IsWeaponOn()
     hide_focus_reticle_now = settings.hide_focus_reticle and settings.focus_strike_only and melee_drawn
 end)
 
@@ -131,8 +124,9 @@ local function is_master_hunter(hunter)
     return hunter ~= nil and master_hunter_address ~= nil and hunter:get_address() == master_hunter_address
 end
 
+-- During Wyvern's Fire the script leaves the Gunlance to the game, as it does a ranged weapon.
 local function is_master_melee(hunter)
-    return is_master_hunter(hunter) and is_melee(hunter) and not master_in_wyverns_fire
+    return is_master_hunter(hunter) and is_melee(hunter) and not is_wyverns_fire(hunter)
 end
 
 local function is_master_melee_drawn(hunter)
