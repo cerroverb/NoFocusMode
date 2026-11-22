@@ -301,11 +301,18 @@ end
 
 -- Stick option: the left stick's up and down tilts the gun through the game's own aim adjustment, the
 -- one Focus Mode drives with the camera (HunterCharacter.onGunnerAimAdjust, a direction, with the
--- Gunlance's Wyvern's Fire limits). Left and right keep turning the hunter as in the unmodded game.
+-- Gunlance's Wyvern's Fire limits). Like the camera in Focus Mode, the stick moves the tilt and the
+-- tilt stays where it is left. Each Wyvern's Fire starts level. Left and right keep turning the hunter
+-- as in the unmodded game, and up and down move at the same speed: the charge turns about 36 degrees
+-- per second with the stick held to one side (measured in a test log).
 -- The stick is read from the pad as in DerKleineLi's MHWs-MIGGA (OmniMove.lua), since the game may not
 -- pass it on during an attack, and the action parameters come from PlayerManager:get_Catalog() as in
 -- its pandora.lua.
+local TILT_DEGREES_PER_SECOND = 36
 local GAMEPAD_TYPE = sdk.find_type_definition("via.hid.GamePad")
+-- Frame time as kmy0's HudController reads it: via.Application DeltaTime, in 60 fps frames.
+local APPLICATION_TYPE = sdk.find_type_definition("via.Application")
+local tilt_degrees = 0
 local NO_BASE_DIR = ValueType.new(sdk.find_type_definition("System.Nullable`1<via.vec3>"))
 
 local function left_stick()
@@ -317,31 +324,21 @@ local function wyverns_fire_aim_limits()
     return sdk.get_managed_singleton("app.PlayerManager"):get_Catalog():get_Wp07ActionParam():get_RyuugekiAimAdjustParam()
 end
 
+local function frame_seconds()
+    return sdk.call_native_func(sdk.get_native_singleton("via.Application"), APPLICATION_TYPE, "get_DeltaTime()") / 60
+end
+
 local function tilt_wyverns_fire(hunter)
     local limits = wyverns_fire_aim_limits()
-    local stick_up = left_stick().y
-    local limit_degrees = math.abs(stick_up >= 0 and limits._LimitUpX or limits._LimitDownX)
-    local pitch = math.rad(limit_degrees) * stick_up
+    tilt_degrees = tilt_degrees + left_stick().y * TILT_DEGREES_PER_SECOND * frame_seconds()
+    tilt_degrees = math.max(-math.abs(limits._LimitDownX), math.min(math.abs(limits._LimitUpX), tilt_degrees))
+    local pitch = math.rad(tilt_degrees)
     local forward = hunter:get_GameObject():get_Transform():get_AxisZ()
     local flat_length = math.sqrt(forward.x * forward.x + forward.z * forward.z)
     local direction = Vector3f.new(forward.x / flat_length * math.cos(pitch), math.sin(pitch),
         forward.z / flat_length * math.cos(pitch))
     hunter:call("onGunnerAimAdjust(via.vec3, app.cGunnerAimAdjustParam, System.Nullable`1<via.vec3>)",
         direction, limits, NO_BASE_DIR)
-end
-
-local function vec3_text(v)
-    return string.format("(%.3f, %.3f, %.3f)", v.x, v.y, v.z)
-end
-
--- Test builds: the hunter's facing while Wyvern's Fire turns left and right, to match the tilt speed to it.
-local function log_wyverns_fire_turn(hunter)
-    local forward = hunter:get_GameObject():get_Transform():get_AxisZ()
-    local action = hunter:get_BaseActionController():get_CurrentAction()
-    if current_action_name(hunter) ~= "cRyuugekiIdle" then return end
-    log_line(string.format("wyverns fire turn yaw %.2f stick_x %.3f phase %d tree_blend %.3f begin_deg %.2f begin_margin %.3f speed_rate %.3f face_pos %s",
-        math.deg(math.atan(forward.x, forward.z)), left_stick().x, action._Phase, action._TreeBlendRate,
-        action._TurnBeginDeg, action._TurnBeginBlendRateMargin, action._TurnSpeedRate, vec3_text(action._TurnTargetFacePos)))
 end
 
 -- The command controller merges pad and keyboard input here, before the game reads its commands.
@@ -363,7 +360,6 @@ end, function(retval)
     track_strike_action(hunter)
     if settings.wyverns_fire_mode == WYVERNS_FIRE_STICK and is_wyverns_fire(hunter) then
         tilt_wyverns_fire(hunter)
-        if settings.log_state then log_wyverns_fire_turn(hunter) end
     end
     if is_camera_aimed_wyverns_fire(hunter) then
         -- The game aims Wyvern's Fire only in Focus Mode, so Focus Mode is held on for the player.
@@ -400,7 +396,9 @@ local CAMERA_RESET_BEHIND_HUNTER = 1 -- app.cPlayerCameraCommandOperator.RESET_T
 
 sdk.hook(sdk.find_type_definition("app.Wp07Action.cRyuugekiStart"):get_method("doEnter"), function(args)
     local hunter = sdk.to_managed_object(args[2]):get_Chara()
-    if settings.wyverns_fire_mode ~= WYVERNS_FIRE_CAMERA or not is_master_hunter(hunter) then return end
+    if not is_master_hunter(hunter) then return end
+    tilt_degrees = 0
+    if settings.wyverns_fire_mode ~= WYVERNS_FIRE_CAMERA then return end
     local player_camera = sdk.get_managed_singleton("app.CameraManager")._MasterPlCamera
     player_camera:get_CommandOperator():call("requestReset(app.cPlayerCameraCommandOperator.RESET_TYPE)",
         CAMERA_RESET_BEHIND_HUNTER)
@@ -434,19 +432,7 @@ end, function(retval)
     return retval
 end)
 
--- Test builds: the Focus Mode turn's argument during Wyvern's Fire, next to the hunter's and camera's yaw.
-local function log_aim_turn(args)
-    local hunter = hunter_from_args(args)
-    if not settings.log_state or not is_master_hunter(hunter) or not is_wyverns_fire(hunter) then return end
-    local forward = hunter:get_GameObject():get_Transform():get_AxisZ()
-    local camera_forward = sdk.get_managed_singleton("app.CameraManager")._MasterPlCamera:get_Forward()
-    log_line(string.format("aim turn %s arg %.4f hunter_yaw %.2f camera_yaw %.2f",
-        current_action_name(hunter), sdk.to_float(args[3]), math.deg(math.atan(forward.x, forward.z)),
-        math.deg(math.atan(camera_forward.x, camera_forward.z))))
-end
-
 local function skip_aim_turn_rotation(args)
-    log_aim_turn(args)
     if settings.no_aim_turning and is_master_melee(hunter_from_args(args)) then
         return sdk.PreHookResult.SKIP_ORIGINAL
     end
@@ -613,6 +599,10 @@ if settings.log_state then
 end
 
 -- Test builds: the aim direction and limits the game uses for Wyvern's Fire, for the stick option.
+local function vec3_text(v)
+    return string.format("(%.3f, %.3f, %.3f)", v.x, v.y, v.z)
+end
+
 if settings.log_state then
     sdk.hook(hunter_type:get_method("onGunnerAimAdjust"), function(args)
         local hunter = hunter_from_args(args)
