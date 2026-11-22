@@ -334,6 +334,28 @@ local function vec3_text(v)
     return string.format("(%.3f, %.3f, %.3f)", v.x, v.y, v.z)
 end
 
+-- During the Wyvern's Fire charge (cRyuugekiIdle) the game starts a turn step only once the blend from
+-- the last step has faded below _TurnBeginBlendRateMargin, so the hunter stands still after each step.
+-- In stick mode the margin is raised while the charge updates, so the next step starts right away and
+-- the hunter keeps turning as in Focus Mode. The game's value is put back after each update.
+local CHAINED_TURN_MARGIN = 1.0
+local charge_turn_margin = { action = nil, saved = nil }
+
+local ryuugeki_idle_type = sdk.find_type_definition("app.Wp07Action.cRyuugekiIdle")
+sdk.hook(ryuugeki_idle_type:get_method("doUpdate"), function(args)
+    local action = sdk.to_managed_object(args[2])
+    if settings.wyverns_fire_mode ~= WYVERNS_FIRE_STICK or not is_master_hunter(action:get_Chara()) then return end
+    charge_turn_margin.action = action
+    charge_turn_margin.saved = action._TurnBeginBlendRateMargin
+    action._TurnBeginBlendRateMargin = CHAINED_TURN_MARGIN
+end, function(retval)
+    if charge_turn_margin.action then
+        charge_turn_margin.action._TurnBeginBlendRateMargin = charge_turn_margin.saved
+        charge_turn_margin.action = nil
+    end
+    return retval
+end)
+
 -- Test builds: the hunter's facing while Wyvern's Fire turns left and right, to match the tilt speed to it.
 local function log_wyverns_fire_turn(hunter)
     local forward = hunter:get_GameObject():get_Transform():get_AxisZ()
