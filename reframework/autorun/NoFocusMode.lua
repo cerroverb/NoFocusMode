@@ -330,13 +330,18 @@ local function tilt_wyverns_fire(hunter)
         direction, limits, NO_BASE_DIR)
 end
 
+local function vec3_text(v)
+    return string.format("(%.3f, %.3f, %.3f)", v.x, v.y, v.z)
+end
+
 -- Test builds: the hunter's facing while Wyvern's Fire turns left and right, to match the tilt speed to it.
 local function log_wyverns_fire_turn(hunter)
     local forward = hunter:get_GameObject():get_Transform():get_AxisZ()
     local action = hunter:get_BaseActionController():get_CurrentAction()
-    local turn_speed_rate = current_action_name(hunter) == "cRyuugekiIdle" and action._TurnSpeedRate or 0
-    log_line(string.format("wyverns fire turn %s yaw %.2f stick_x %.3f turn_speed_rate %.3f",
-        current_action_name(hunter), math.deg(math.atan(forward.x, forward.z)), left_stick().x, turn_speed_rate))
+    if current_action_name(hunter) ~= "cRyuugekiIdle" then return end
+    log_line(string.format("wyverns fire turn yaw %.2f stick_x %.3f phase %d tree_blend %.3f begin_deg %.2f begin_margin %.3f speed_rate %.3f face_pos %s",
+        math.deg(math.atan(forward.x, forward.z)), left_stick().x, action._Phase, action._TreeBlendRate,
+        action._TurnBeginDeg, action._TurnBeginBlendRateMargin, action._TurnSpeedRate, vec3_text(action._TurnTargetFacePos)))
 end
 
 -- The command controller merges pad and keyboard input here, before the game reads its commands.
@@ -596,10 +601,6 @@ if settings.log_state then
 end
 
 -- Test builds: the aim direction and limits the game uses for Wyvern's Fire, for the stick option.
-local function vec3_text(v)
-    return string.format("(%.3f, %.3f, %.3f)", v.x, v.y, v.z)
-end
-
 if settings.log_state then
     sdk.hook(hunter_type:get_method("onGunnerAimAdjust"), function(args)
         local hunter = hunter_from_args(args)
