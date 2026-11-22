@@ -33,8 +33,10 @@
 local CONFIG_PATH = "NoFocusMode.json"
 
 -- How the Gunlance's Wyvern's Fire is aimed, an index into WYVERNS_FIRE_MODES.
-local WYVERNS_FIRE_MODES = { "Off, fires straight ahead", "Camera turns behind the hunter, Focus Mode held for the player" }
+local WYVERNS_FIRE_MODES = { "Off, fires straight ahead", "Camera turns behind the hunter, Focus Mode held for the player",
+    "Left stick tilts the gun up and down, no Focus Mode" }
 local WYVERNS_FIRE_CAMERA = 2
+local WYVERNS_FIRE_STICK = 3
 
 local settings = {
     log_state = true, -- false in releases
@@ -297,6 +299,37 @@ local function game_takes_focus_strike_now(action)
         or (NOT_STARTED_ACTIONS[action] and game_asks_for(FOCUS_MODE_COMMAND))
 end
 
+-- Stick option: the left stick's up and down tilts the gun through the game's own aim adjustment, the
+-- one Focus Mode drives with the camera (HunterCharacter.onGunnerAimAdjust, a direction, with the
+-- Gunlance's Wyvern's Fire limits). Left and right keep turning the hunter as in the unmodded game.
+-- The stick is read from the pad as in DerKleineLi's MHWs-MIGGA (OmniMove.lua), since the game may not
+-- pass it on during an attack, and the action parameters come from PlayerManager:get_Catalog() as in
+-- its pandora.lua.
+local GAMEPAD_TYPE = sdk.find_type_definition("via.hid.GamePad")
+local NO_BASE_DIR = ValueType.new(sdk.find_type_definition("System.Nullable`1<via.vec3>"))
+
+local function left_stick_up()
+    local device = sdk.call_native_func(sdk.get_native_singleton("via.hid.GamePad"), GAMEPAD_TYPE, "get_MergedDevice")
+    return device and device:get_AxisL().y or 0
+end
+
+local function wyverns_fire_aim_limits()
+    return sdk.get_managed_singleton("app.PlayerManager"):get_Catalog():get_Wp07ActionParam():get_RyuugekiAimAdjustParam()
+end
+
+local function tilt_wyverns_fire(hunter)
+    local limits = wyverns_fire_aim_limits()
+    local stick_up = left_stick_up()
+    local limit_degrees = math.abs(stick_up >= 0 and limits._LimitUpX or limits._LimitDownX)
+    local pitch = math.rad(limit_degrees) * stick_up
+    local forward = hunter:get_GameObject():get_Transform():get_AxisZ()
+    local flat_length = math.sqrt(forward.x * forward.x + forward.z * forward.z)
+    local direction = Vector3f.new(forward.x / flat_length * math.cos(pitch), math.sin(pitch),
+        forward.z / flat_length * math.cos(pitch))
+    hunter:call("onGunnerAimAdjust(via.vec3, app.cGunnerAimAdjustParam, System.Nullable`1<via.vec3>)",
+        direction, limits, NO_BASE_DIR)
+end
+
 -- The command controller merges pad and keyboard input here, before the game reads its commands.
 local merging_controller = nil
 
@@ -314,6 +347,9 @@ end, function(retval)
     focus_button_held = focus_key:get_On()
 
     track_strike_action(hunter)
+    if settings.wyverns_fire_mode == WYVERNS_FIRE_STICK and is_wyverns_fire(hunter) then
+        tilt_wyverns_fire(hunter)
+    end
     if is_camera_aimed_wyverns_fire(hunter) then
         -- The game aims Wyvern's Fire only in Focus Mode, so Focus Mode is held on for the player.
         focus_key:set_On(true)
