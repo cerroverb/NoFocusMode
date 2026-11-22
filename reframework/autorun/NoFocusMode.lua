@@ -8,8 +8,7 @@
 -- Monster wounds are highlighted while the focus button is held.
 -- With an Insect Glaive, focus button + B during the charged attack with all three extracts still
 -- does the Rising Spiral Slash.
--- During the Gunlance's Wyvern's Fire the focus button keeps its Focus Mode, so the blast can be aimed,
--- upwards too, as in earlier games.
+-- The Gunlance's Wyvern's Fire can be aimed, upwards too, without holding a button, as in earlier games.
 -- Ranged weapons and a sheathed weapon keep the game's behavior.
 -- Switches are in the REFramework menu under "No Focus Mode" and are saved to reframework/data/NoFocusMode.json.
 -- With "Log focus state" on, Focus Strike presses, actions and focus state are written to
@@ -55,7 +54,7 @@ local PAD_KEY_ATTACK_01 = 1 -- B on a pad
 local INSECT_GLAIVE = 10
 local RISING_SPIRAL_SLASH_FROM = "cHoldAttackSuper"
 -- Gunlance (app.WeaponDef.TYPE GUN_LANCE) Wyvern's Fire: Wp07Action.cRyuugekiStart, cRyuugekiIdle and
--- cRyuugekiShoot. The game takes Focus Mode during cRyuugekiStart and aims the blast with it.
+-- cRyuugekiShoot. The game aims the blast only in Focus Mode, which it takes during cRyuugekiStart.
 local GUNLANCE = 7
 local WYVERNS_FIRE_ACTIONS = { cRyuugekiStart = true, cRyuugekiIdle = true, cRyuugekiShoot = true }
 -- app.HunterDef.ACTION_START_TURN_TYPE: the _AIM variants turn towards the camera.
@@ -307,6 +306,9 @@ end, function(retval)
     focus_button_held = focus_key:get_On()
 
     track_strike_action(hunter)
+    if is_wyverns_fire(hunter) then
+        focus_key:set_On(true)
+    end
     if not settings.focus_strike_only or not is_master_melee_drawn(hunter) then
         reset_strike()
         return retval
@@ -539,7 +541,7 @@ re.on_draw_ui(function()
     setting_checkbox("No pull towards the target on Focus Strikes (melee)", "no_target_pull")
     setting_checkbox("Focus Strikes go where the hunter faces, not the camera (Sword and Shield, Hammer, Hunting Horn, Lance, Gunlance)", "no_strike_turn_to_camera")
     setting_checkbox("L2 + B does the Rising Spiral Slash (Insect Glaive charged attack, three extracts)", "rising_spiral_slash")
-    setting_checkbox("L2 aims the Wyvern's Fire as in the unmodded game (Gunlance)", "wyverns_fire_aim")
+    setting_checkbox("Wyvern's Fire can be aimed without holding L2 (Gunlance)", "wyverns_fire_aim")
     setting_checkbox("R1 alone does the Focus Strike, R1 no longer sheathes (melee, weapon drawn)", "strike_on_r1_alone")
     setting_checkbox("Log focus state (applies after Reset scripts)", "log_state")
     imgui.tree_pop()
