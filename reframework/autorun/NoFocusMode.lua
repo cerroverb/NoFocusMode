@@ -9,6 +9,8 @@
 -- With an Insect Glaive, focus button + B during the charged attack with all three extracts still
 -- does the Rising Spiral Slash.
 -- The Gunlance's Wyvern's Fire can be aimed, upwards too, without holding a button, as in earlier games.
+-- As in Monster Hunter Rise, the camera turns behind the hunter when it starts, and the hunter does not
+-- turn to the camera.
 -- Ranged weapons and a sheathed weapon keep the game's behavior.
 -- Switches are in the REFramework menu under "No Focus Mode" and are saved to reframework/data/NoFocusMode.json.
 -- With "Log focus state" on, Focus Strike presses, actions and focus state are written to
@@ -123,9 +125,8 @@ local function is_master_hunter(hunter)
     return hunter ~= nil and master_hunter_address ~= nil and hunter:get_address() == master_hunter_address
 end
 
--- During Wyvern's Fire the script leaves the Gunlance to the game, as it does a ranged weapon.
 local function is_master_melee(hunter)
-    return is_master_hunter(hunter) and is_melee(hunter) and not is_wyverns_fire(hunter)
+    return is_master_hunter(hunter) and is_melee(hunter)
 end
 
 local function is_master_melee_drawn(hunter)
@@ -307,7 +308,10 @@ end, function(retval)
 
     track_strike_action(hunter)
     if is_wyverns_fire(hunter) then
+        -- The game aims Wyvern's Fire only in Focus Mode, so Focus Mode is held on for the player.
         focus_key:set_On(true)
+        reset_strike()
+        return retval
     end
     if not settings.focus_strike_only or not is_master_melee_drawn(hunter) then
         reset_strike()
@@ -328,6 +332,21 @@ end, function(retval)
         focus_key:clear()
     end
     return retval
+end)
+
+-- The game's camera reset, the one the camera reset button does, turns the camera behind the hunter
+-- when Wyvern's Fire starts. The camera is reached through app.CameraManager._MasterPlCamera as in
+-- DerKleineLi's MHWs-MIGGA (pandora.lua), and the hook on the action's doEnter follows lingsamuel's
+-- Smart Focus Attack.
+local CAMERA_RESET_BEHIND_HUNTER = 1 -- app.cPlayerCameraCommandOperator.RESET_TYPE RESET
+
+sdk.hook(sdk.find_type_definition("app.Wp07Action.cRyuugekiStart"):get_method("doEnter"), function(args)
+    local hunter = sdk.to_managed_object(args[2]):get_Chara()
+    if not settings.wyverns_fire_aim or not is_master_hunter(hunter) then return end
+    local player_camera = sdk.get_managed_singleton("app.CameraManager")._MasterPlCamera
+    player_camera:get_CommandOperator():call("requestReset(app.cPlayerCameraCommandOperator.RESET_TYPE)",
+        CAMERA_RESET_BEHIND_HUNTER)
+    log_line("Wyvern's Fire started, camera reset behind the hunter")
 end)
 
 -- Focus Strikes and other Focus Mode actions start with an _AIM turn towards the camera.
