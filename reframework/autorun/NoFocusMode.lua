@@ -8,6 +8,8 @@
 -- Monster wounds are highlighted while the focus button is held.
 -- With an Insect Glaive, focus button + B during the charged attack with all three extracts still
 -- does the Rising Spiral Slash.
+-- During the Gunlance's Wyvern's Fire the focus button keeps its Focus Mode, so the blast can be aimed,
+-- upwards too, as in earlier games.
 -- Ranged weapons and a sheathed weapon keep the game's behavior.
 -- Switches are in the REFramework menu under "No Focus Mode" and are saved to reframework/data/NoFocusMode.json.
 -- With "Log focus state" on, Focus Strike presses, actions and focus state are written to
@@ -30,7 +32,7 @@
 local CONFIG_PATH = "NoFocusMode.json"
 
 local settings = {
-    log_state = false,
+    log_state = true, -- false in releases
     focus_strike_only = true,
     no_aim_turning = true,
     wounds_only_while_focus_held = true,
@@ -39,6 +41,7 @@ local settings = {
     no_strike_turn_to_camera = true,
     rising_spiral_slash = true,
     strike_on_r1_alone = false,
+    wyverns_fire_aim = true,
 }
 
 -- app.WeaponDef.TYPE: LONG_SWORD = 0 through ROD = 10 are melee. BOW, HEAVY_BOWGUN and LIGHT_BOWGUN follow.
@@ -51,6 +54,10 @@ local PAD_KEY_ATTACK_01 = 1 -- B on a pad
 -- charged attack with all three extracts (Wp10Action.cHoldAttackSuper).
 local INSECT_GLAIVE = 10
 local RISING_SPIRAL_SLASH_FROM = "cHoldAttackSuper"
+-- Gunlance (app.WeaponDef.TYPE GUN_LANCE) Wyvern's Fire: Wp07Action.cRyuugekiStart, cRyuugekiIdle and
+-- cRyuugekiShoot. The game takes Focus Mode during cRyuugekiStart and aims the blast with it.
+local GUNLANCE = 7
+local WYVERNS_FIRE_ACTIONS = { cRyuugekiStart = true, cRyuugekiIdle = true, cRyuugekiShoot = true }
 -- app.HunterDef.ACTION_START_TURN_TYPE: the _AIM variants turn towards the camera.
 local START_TURN_FOR_AIM = { [3] = 1, [4] = 2 } -- LV1_AIM -> LV1, LV2_AIM -> LV2
 
@@ -90,16 +97,33 @@ local function is_melee(hunter)
     return weapon_type >= 0 and weapon_type <= LAST_MELEE_WEAPON_TYPE
 end
 
+local function current_action_name(hunter)
+    local action = hunter:get_BaseActionController():get_CurrentAction()
+    return action and action:get_type_definition():get_name() or "none"
+end
+
+local function is_wyverns_fire(hunter)
+    return settings.wyverns_fire_aim and hunter:get_WeaponType() == GUNLANCE
+        and WYVERNS_FIRE_ACTIONS[current_action_name(hunter)] == true
+end
+
 -- More than one hunter object can report get_IsMaster, so the master is matched
 -- against the character from PlayerManager instead. Its address is looked up once per frame,
 -- and only the address is kept, so no hook calls into an object from an earlier frame.
 local master_hunter_address = nil
 local hide_focus_reticle_now = false
+-- While this is true the script leaves the master's Gunlance to the game, as it does a ranged weapon.
+local master_in_wyverns_fire = false
 
 re.on_frame(function()
     local master = get_master_hunter()
     master_hunter_address = master and master:get_address() or nil
-    local melee_drawn = master ~= nil and is_melee(master) and master:get_IsWeaponOn()
+    local in_wyverns_fire = master ~= nil and is_wyverns_fire(master)
+    if in_wyverns_fire ~= master_in_wyverns_fire then
+        log_line("Wyvern's Fire aiming " .. (in_wyverns_fire and "on" or "off"))
+    end
+    master_in_wyverns_fire = in_wyverns_fire
+    local melee_drawn = master ~= nil and is_melee(master) and not in_wyverns_fire and master:get_IsWeaponOn()
     hide_focus_reticle_now = settings.hide_focus_reticle and settings.focus_strike_only and melee_drawn
 end)
 
@@ -108,7 +132,7 @@ local function is_master_hunter(hunter)
 end
 
 local function is_master_melee(hunter)
-    return is_master_hunter(hunter) and is_melee(hunter)
+    return is_master_hunter(hunter) and is_melee(hunter) and not master_in_wyverns_fire
 end
 
 local function is_master_melee_drawn(hunter)
@@ -136,11 +160,6 @@ end
 -- action: the action the strike turned into, kept until the hunter leaves it.
 local strike = { frames_left = 0, pending = false, sent = false, start_action = nil, key_index = PAD_KEY_FOCUS_STRIKE,
     action = nil }
-
-local function current_action_name(hunter)
-    local action = hunter:get_BaseActionController():get_CurrentAction()
-    return action and action:get_type_definition():get_name() or "none"
-end
 
 local function reset_strike()
     strike.frames_left = 0
@@ -526,6 +545,7 @@ re.on_draw_ui(function()
     setting_checkbox("No pull towards the target on Focus Strikes (melee)", "no_target_pull")
     setting_checkbox("Focus Strikes go where the hunter faces, not the camera (Sword and Shield, Hammer, Hunting Horn, Lance, Gunlance)", "no_strike_turn_to_camera")
     setting_checkbox("L2 + B does the Rising Spiral Slash (Insect Glaive charged attack, three extracts)", "rising_spiral_slash")
+    setting_checkbox("L2 aims the Wyvern's Fire as in the unmodded game (Gunlance)", "wyverns_fire_aim")
     setting_checkbox("R1 alone does the Focus Strike, R1 no longer sheathes (melee, weapon drawn)", "strike_on_r1_alone")
     setting_checkbox("Log focus state (applies after Reset scripts)", "log_state")
     imgui.tree_pop()
