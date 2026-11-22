@@ -1,6 +1,6 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2026 cerroverb
--- Focus Rules: Manual Aim / Focus Aim Restricted (MA) for Monster Hunter Wilds.
+-- No Focus Mode: Manual Aim / Focus Aim Restricted (MA) for Monster Hunter Wilds.
 -- With a melee weapon drawn, the focus button on its own no longer enters Focus Mode, and the focus
 -- reticle stays hidden. Focus button + R1 still performs a Focus Strike, turned only the way a normal
 -- attack turns, never towards the camera. R1 on its own keeps its normal use, unless "R1 alone does
@@ -9,7 +9,7 @@
 -- With an Insect Glaive, focus button + B during the charged attack with all three extracts still
 -- does the Rising Spiral Slash.
 -- Ranged weapons and a sheathed weapon keep the game's behavior.
--- Switches are in the REFramework menu under "Focus Rules" and are saved to reframework/data/FocusRules.json.
+-- Switches are in the REFramework menu under "No Focus Mode" and are saved to reframework/data/NoFocusMode.json.
 -- With "Log focus state" on, Focus Strike presses, actions and focus state are written to
 -- re2_framework_log.txt. Logging is off by default, and its hook is only installed when it is on at
 -- script load.
@@ -27,7 +27,7 @@
 -- The game's Focus Strike command (app.PlayerCommand.TYPE AIM_SP_B) and app.PlayerUtil.checkCommandResult
 -- come from lingsamuel's Smart Focus Attack (Nexus Mods 75) and its _CatLib fsm.lua.
 
-local CONFIG_PATH = "FocusRules.json"
+local CONFIG_PATH = "NoFocusMode.json"
 
 local settings = {
     log_state = false,
@@ -73,7 +73,7 @@ load_settings()
 
 local function log_line(text)
     if settings.log_state then
-        log.info("[FocusRules] " .. string.format("%.3f ", os.clock()) .. text)
+        log.info("[NoFocusMode] " .. string.format("%.3f ", os.clock()) .. text)
     end
 end
 
@@ -518,7 +518,7 @@ local function setting_checkbox(label, key)
 end
 
 re.on_draw_ui(function()
-    if not imgui.tree_node("Focus Rules") then return end
+    if not imgui.tree_node("No Focus Mode") then return end
     setting_checkbox("L2 alone does nothing, L2 + R1 does a Focus Strike (melee, weapon drawn)", "focus_strike_only")
     setting_checkbox("No turning towards the camera (melee)", "no_aim_turning")
     setting_checkbox("Show wounds only while L2 is held", "wounds_only_while_focus_held")

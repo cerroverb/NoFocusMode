@@ -1,4 +1,4 @@
-Focus Rules is a REFramework script for Monster Hunter Wilds that removes Focus Mode aiming from melee weapons while keeping Focus Strikes.
+No Focus Mode is a REFramework script for Monster Hunter Wilds that removes Focus Mode aiming from melee weapons while keeping Focus Strikes.
 
 - With a melee weapon drawn, L2 alone no longer enters Focus Mode and the focus reticle stays hidden.
 - L2 + R1 still performs a Focus Strike. It turns the way a normal attack turns, never towards the camera, and follows the game's own timing for buffered presses.
@@ -7,9 +7,9 @@ Focus Rules is a REFramework script for Monster Hunter Wilds that removes Focus 
 - With an Insect Glaive, L2 + B during the charged attack with all three extracts still does the Rising Spiral Slash.
 - Ranged weapons and a sheathed weapon keep the game's behavior.
 
-Every switch is in the REFramework menu under "Focus Rules" and is saved to reframework/data/FocusRules.json.
+Every switch is in the REFramework menu under "No Focus Mode" and is saved to reframework/data/NoFocusMode.json.
 
-Install REFramework, then copy reframework/autorun/FocusRules.lua into the game folder at the same path, or install the zip from Releases with Fluffy Mod Manager.
+Install REFramework, then copy reframework/autorun/NoFocusMode.lua into the game folder at the same path, or install the zip from Releases with Fluffy Mod Manager.
 
 Credits, with what each one contributed listed at the top of the script.
 
