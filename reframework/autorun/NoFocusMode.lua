@@ -320,6 +320,13 @@ local function left_stick()
     return device and device:get_AxisL() or Vector2f.new(0, 0)
 end
 
+-- A stick pushed mostly sideways turns the hunter. Only a stick pushed more up or down than sideways
+-- tilts, so turning does not slowly raise or lower the gun.
+local function tilt_input()
+    local stick = left_stick()
+    return math.abs(stick.y) > math.abs(stick.x) and stick.y or 0
+end
+
 local function wyverns_fire_aim_limits()
     return sdk.get_managed_singleton("app.PlayerManager"):get_Catalog():get_Wp07ActionParam():get_RyuugekiAimAdjustParam()
 end
@@ -330,7 +337,7 @@ end
 
 local function tilt_wyverns_fire(hunter)
     local limits = wyverns_fire_aim_limits()
-    tilt_degrees = tilt_degrees + left_stick().y * TILT_DEGREES_PER_SECOND * frame_seconds()
+    tilt_degrees = tilt_degrees + tilt_input() * TILT_DEGREES_PER_SECOND * frame_seconds()
     tilt_degrees = math.max(-math.abs(limits._LimitDownX), math.min(math.abs(limits._LimitUpX), tilt_degrees))
     local pitch = math.rad(tilt_degrees)
     local forward = hunter:get_GameObject():get_Transform():get_AxisZ()
@@ -609,9 +616,10 @@ if settings.log_state then
         if not is_master_hunter(hunter) or not is_wyverns_fire(hunter) then return end
         local param = sdk.to_managed_object(args[4])
         local camera_forward = sdk.get_managed_singleton("app.CameraManager")._MasterPlCamera:get_Forward()
-        log_line(string.format("aim adjust %s dir %s camera %s limits up %.1f down %.1f side %.1f",
+        local stick = left_stick()
+        log_line(string.format("aim adjust %s dir %s camera %s limits up %.1f down %.1f side %.1f stick (%.3f, %.3f)",
             current_action_name(hunter), vec3_text(sdk.to_valuetype(args[3], "via.vec3")), vec3_text(camera_forward),
-            param._LimitUpX, param._LimitDownX, param._LimitY))
+            param._LimitUpX, param._LimitDownX, param._LimitY, stick.x, stick.y))
     end)
 end
 
