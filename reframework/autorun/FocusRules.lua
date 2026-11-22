@@ -1,3 +1,5 @@
+-- SPDX-License-Identifier: GPL-3.0-or-later
+-- Copyright (C) 2026 cerroverb
 -- Focus Rules: Manual Aim / Focus Aim Restricted (MA) for Monster Hunter Wilds.
 -- With a melee weapon drawn, the focus button on its own no longer enters Focus Mode, and the focus
 -- reticle stays hidden. Focus button + R1 still performs a Focus Strike, turned only the way a normal
