@@ -330,6 +330,19 @@ local function tilt_wyverns_fire(hunter)
         direction, limits, NO_BASE_DIR)
 end
 
+-- Test builds: the camera's pad speed values, to set the stick tilt to the camera's own turn speed.
+local function log_camera_speed()
+    local camera_operator = sdk.get_managed_singleton("app.CameraManager")._MasterPlCamera._Operator
+    local calculator = camera_operator._Calculator
+    local option = calculator._Option
+    local camera_forward = sdk.get_managed_singleton("app.CameraManager")._MasterPlCamera:get_Forward()
+    log_line(string.format("camera speed pitch %.4f yaw %.4f view_rate %.4f rot_rate %.4f smooth %.4f response %.3f-%.3f exp %.3f rot_amount (%.5f, %.5f) pad (%.3f, %.3f) camera_y %.4f",
+        option._PadSpeedPitch, option._PadSpeedYaw, calculator:getViewRate(), camera_operator:getRotRate(),
+        option._PadSmoothRate, option._ResponseLower, option._ResponseUpper, option._ResponseExp,
+        camera_operator._RotAmount.x, camera_operator._RotAmount.y, camera_operator._PadInput.x, camera_operator._PadInput.y,
+        camera_forward.y))
+end
+
 -- The command controller merges pad and keyboard input here, before the game reads its commands.
 local merging_controller = nil
 
@@ -349,6 +362,7 @@ end, function(retval)
     track_strike_action(hunter)
     if settings.wyverns_fire_mode == WYVERNS_FIRE_STICK and is_wyverns_fire(hunter) then
         tilt_wyverns_fire(hunter)
+        if settings.log_state then log_camera_speed() end
     end
     if is_camera_aimed_wyverns_fire(hunter) then
         -- The game aims Wyvern's Fire only in Focus Mode, so Focus Mode is held on for the player.
