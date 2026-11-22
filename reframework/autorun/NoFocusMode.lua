@@ -560,8 +560,8 @@ local function read_focus_state(hunter)
     }
 end
 
--- Test builds: how far each Lance poke moves the hunter, forward and sideways from where they faced,
--- and how that relates to the nearest monster. The monster list is read as in kmy0's HudController
+-- Test builds: how far each Lance poke and each Focus Strike moves the hunter, forward and sideways
+-- from where they faced, and how that relates to the nearest monster. The monster list is read as in kmy0's HudController
 -- (app.EnemyManager._EnemyList, cEnemyManageInfo:get_Pos()).
 local LANCE_POKES = { cStab1 = true, cStab2 = true, cStab3 = true, cStabUp1 = true, cStabUp2 = true, cStabUp3 = true }
 local poke_start = nil
@@ -608,13 +608,19 @@ local function log_poke_movement(hunter)
         monster_text = string.format("monster %.2f -> %.2f m at %.0f deg, move at %.0f deg",
             (start.monster - start.position):length(), (start.monster - hunter:get_Pos()):length(), monster_angle, move_angle)
     end
-    log_line(string.format("poke %s forward %.2f m sideways %.2f m stick (%.2f, %.2f) %s",
-        start.action, along, sideways, start.stick.x, start.stick.y, monster_text))
+    log_line(string.format("moved %s no_target_pull=%s forward %.2f m sideways %.2f m stick (%.2f, %.2f) %s",
+        start.action, tostring(settings.no_target_pull), along, sideways, start.stick.x, start.stick.y, monster_text))
+end
+
+-- Focus Strike actions are the Focus Mode actions that are not a stance, such as cAimAttack.
+local function is_measured_action(hunter, action_name)
+    return (hunter:get_WeaponType() == LANCE and LANCE_POKES[action_name])
+        or (action_name:find("Aim", 1, true) ~= nil and not is_strike_not_started(action_name))
 end
 
 local function track_lance_poke(hunter, action_name)
     if poke_start then log_poke_movement(hunter) end
-    if hunter:get_WeaponType() == LANCE and LANCE_POKES[action_name] then start_poke(hunter, action_name) end
+    if is_measured_action(hunter, action_name) then start_poke(hunter, action_name) end
 end
 
 local function log_state_changes(hunter)
