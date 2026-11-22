@@ -434,7 +434,19 @@ end, function(retval)
     return retval
 end)
 
+-- Test builds: the Focus Mode turn's argument during Wyvern's Fire, next to the hunter's and camera's yaw.
+local function log_aim_turn(args)
+    local hunter = hunter_from_args(args)
+    if not settings.log_state or not is_master_hunter(hunter) or not is_wyverns_fire(hunter) then return end
+    local forward = hunter:get_GameObject():get_Transform():get_AxisZ()
+    local camera_forward = sdk.get_managed_singleton("app.CameraManager")._MasterPlCamera:get_Forward()
+    log_line(string.format("aim turn %s arg %.4f hunter_yaw %.2f camera_yaw %.2f",
+        current_action_name(hunter), sdk.to_float(args[3]), math.deg(math.atan(forward.x, forward.z)),
+        math.deg(math.atan(camera_forward.x, camera_forward.z))))
+end
+
 local function skip_aim_turn_rotation(args)
+    log_aim_turn(args)
     if settings.no_aim_turning and is_master_melee(hunter_from_args(args)) then
         return sdk.PreHookResult.SKIP_ORIGINAL
     end
