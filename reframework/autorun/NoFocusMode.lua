@@ -8,9 +8,9 @@
 -- Monster wounds are highlighted while the focus button is held.
 -- With an Insect Glaive, focus button + B during the charged attack with all three extracts still
 -- does the Rising Spiral Slash.
--- The Gunlance's Wyvern's Fire can be aimed, upwards too, without holding a button, as in earlier games.
--- As in Monster Hunter Rise, the camera turns behind the hunter when it starts, and the hunter does not
--- turn to the camera.
+-- The Gunlance's Wyvern's Fire can be aimed upwards again, as in earlier games, without holding L2:
+-- either the left stick tilts the gun up and down (default), or, as in Monster Hunter Rise, the camera
+-- turns behind the hunter when it starts and the blast follows the camera.
 -- Ranged weapons and a sheathed weapon keep the game's behavior.
 -- Switches are in the REFramework menu under "No Focus Mode" and are saved to reframework/data/NoFocusMode.json.
 -- With "Log focus state" on, Focus Strike presses, actions and focus state are written to
@@ -39,7 +39,7 @@ local WYVERNS_FIRE_CAMERA = 2
 local WYVERNS_FIRE_STICK = 3
 
 local settings = {
-    log_state = true, -- false in releases
+    log_state = false,
     focus_strike_only = true,
     no_aim_turning = true,
     wounds_only_while_focus_held = true,
@@ -48,7 +48,7 @@ local settings = {
     no_strike_turn_to_camera = true,
     rising_spiral_slash = true,
     strike_on_r1_alone = false,
-    wyverns_fire_mode = WYVERNS_FIRE_CAMERA,
+    wyverns_fire_mode = WYVERNS_FIRE_STICK,
 }
 
 -- app.WeaponDef.TYPE: LONG_SWORD = 0 through ROD = 10 are melee. BOW, HEAVY_BOWGUN and LIGHT_BOWGUN follow.
@@ -62,7 +62,7 @@ local PAD_KEY_ATTACK_01 = 1 -- B on a pad
 local INSECT_GLAIVE = 10
 local RISING_SPIRAL_SLASH_FROM = "cHoldAttackSuper"
 -- Gunlance (app.WeaponDef.TYPE GUN_LANCE) Wyvern's Fire: Wp07Action.cRyuugekiStart, cRyuugekiIdle and
--- cRyuugekiShoot. The game aims the blast only in Focus Mode, which it takes during cRyuugekiStart.
+-- cRyuugekiShoot. The unmodded game aims the blast only in Focus Mode, which it takes during cRyuugekiStart.
 local GUNLANCE = 7
 local WYVERNS_FIRE_ACTIONS = { cRyuugekiStart = true, cRyuugekiIdle = true, cRyuugekiShoot = true }
 -- app.HunterDef.ACTION_START_TURN_TYPE: the _AIM variants turn towards the camera.
@@ -582,23 +582,6 @@ if settings.log_state then
         if not hunter or not hunter:get_type_definition():is_a("app.HunterCharacter") then return end
         if not is_master_hunter(hunter) then return end
         log_state_changes(hunter)
-    end)
-end
-
--- Test builds: the aim direction and limits the game uses for Wyvern's Fire, for the stick option.
-local function vec3_text(v)
-    return string.format("(%.3f, %.3f, %.3f)", v.x, v.y, v.z)
-end
-
-if settings.log_state then
-    sdk.hook(hunter_type:get_method("onGunnerAimAdjust"), function(args)
-        local hunter = hunter_from_args(args)
-        if not is_master_hunter(hunter) or not is_wyverns_fire(hunter) then return end
-        local param = sdk.to_managed_object(args[4])
-        local camera_forward = sdk.get_managed_singleton("app.CameraManager")._MasterPlCamera:get_Forward()
-        log_line(string.format("aim adjust %s dir %s camera %s limits up %.1f down %.1f side %.1f",
-            current_action_name(hunter), vec3_text(sdk.to_valuetype(args[3], "via.vec3")), vec3_text(camera_forward),
-            param._LimitUpX, param._LimitDownX, param._LimitY))
     end)
 end
 

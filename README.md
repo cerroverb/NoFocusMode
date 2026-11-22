@@ -5,6 +5,7 @@ No Focus Mode is a REFramework script for Monster Hunter Wilds that removes Focu
 - R1 alone keeps its normal use, unless "R1 alone does the Focus Strike" is on.
 - Monster wounds are highlighted while L2 is held.
 - With an Insect Glaive, L2 + B during the charged attack with all three extracts still does the Rising Spiral Slash.
+- The Gunlance's Wyvern's Fire can be aimed upwards again, as in earlier games. By default the left stick tilts the gun up and down while it charges, with no Focus Mode. The "Wyvern's Fire aiming" menu also offers a Rise style choice, where the camera turns behind the hunter and the blast follows the camera, or Off.
 - Ranged weapons and a sheathed weapon keep the game's behavior.
 
 Every switch is in the REFramework menu under "No Focus Mode" and is saved to reframework/data/NoFocusMode.json.
