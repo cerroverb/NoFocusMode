@@ -308,9 +308,9 @@ end
 local GAMEPAD_TYPE = sdk.find_type_definition("via.hid.GamePad")
 local NO_BASE_DIR = ValueType.new(sdk.find_type_definition("System.Nullable`1<via.vec3>"))
 
-local function left_stick_up()
+local function left_stick()
     local device = sdk.call_native_func(sdk.get_native_singleton("via.hid.GamePad"), GAMEPAD_TYPE, "get_MergedDevice")
-    return device and device:get_AxisL().y or 0
+    return device and device:get_AxisL() or Vector2f.new(0, 0)
 end
 
 local function wyverns_fire_aim_limits()
@@ -319,7 +319,7 @@ end
 
 local function tilt_wyverns_fire(hunter)
     local limits = wyverns_fire_aim_limits()
-    local stick_up = left_stick_up()
+    local stick_up = left_stick().y
     local limit_degrees = math.abs(stick_up >= 0 and limits._LimitUpX or limits._LimitDownX)
     local pitch = math.rad(limit_degrees) * stick_up
     local forward = hunter:get_GameObject():get_Transform():get_AxisZ()
@@ -330,17 +330,13 @@ local function tilt_wyverns_fire(hunter)
         direction, limits, NO_BASE_DIR)
 end
 
--- Test builds: the camera's pad speed values, to set the stick tilt to the camera's own turn speed.
-local function log_camera_speed()
-    local camera_operator = sdk.get_managed_singleton("app.CameraManager")._MasterPlCamera._Operator
-    local calculator = camera_operator._Calculator
-    local option = calculator._Option
-    local camera_forward = sdk.get_managed_singleton("app.CameraManager")._MasterPlCamera:get_Forward()
-    log_line(string.format("camera speed pitch %.4f yaw %.4f view_rate %.4f rot_rate %.4f smooth %.4f response %.3f-%.3f exp %.3f rot_amount (%.5f, %.5f) pad (%.3f, %.3f) camera_y %.4f",
-        option._PadSpeedPitch, option._PadSpeedYaw, calculator:getViewRate(), camera_operator:getRotRate(),
-        option._PadSmoothRate, option._ResponseLower, option._ResponseUpper, option._ResponseExp,
-        camera_operator._RotAmount.x, camera_operator._RotAmount.y, camera_operator._PadInput.x, camera_operator._PadInput.y,
-        camera_forward.y))
+-- Test builds: the hunter's facing while Wyvern's Fire turns left and right, to match the tilt speed to it.
+local function log_wyverns_fire_turn(hunter)
+    local forward = hunter:get_GameObject():get_Transform():get_AxisZ()
+    local action = hunter:get_BaseActionController():get_CurrentAction()
+    local turn_speed_rate = current_action_name(hunter) == "cRyuugekiIdle" and action._TurnSpeedRate or 0
+    log_line(string.format("wyverns fire turn %s yaw %.2f stick_x %.3f turn_speed_rate %.3f",
+        current_action_name(hunter), math.deg(math.atan(forward.x, forward.z)), left_stick().x, turn_speed_rate))
 end
 
 -- The command controller merges pad and keyboard input here, before the game reads its commands.
@@ -362,7 +358,7 @@ end, function(retval)
     track_strike_action(hunter)
     if settings.wyverns_fire_mode == WYVERNS_FIRE_STICK and is_wyverns_fire(hunter) then
         tilt_wyverns_fire(hunter)
-        if settings.log_state then log_camera_speed() end
+        if settings.log_state then log_wyverns_fire_turn(hunter) end
     end
     if is_camera_aimed_wyverns_fire(hunter) then
         -- The game aims Wyvern's Fire only in Focus Mode, so Focus Mode is held on for the player.
