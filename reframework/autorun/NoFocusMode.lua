@@ -39,7 +39,7 @@ local WYVERNS_FIRE_CAMERA = 2
 local WYVERNS_FIRE_STICK = 3
 
 local settings = {
-    log_state = false,
+    log_state = true, -- false in releases
     focus_strike_only = true,
     no_aim_turning = true,
     wounds_only_while_focus_held = true,
@@ -64,6 +64,7 @@ local RISING_SPIRAL_SLASH_FROM = "cHoldAttackSuper"
 -- Gunlance (app.WeaponDef.TYPE GUN_LANCE) Wyvern's Fire: Wp07Action.cRyuugekiStart, cRyuugekiIdle and
 -- cRyuugekiShoot. The unmodded game aims the blast only in Focus Mode, which it takes during cRyuugekiStart.
 local GUNLANCE = 7
+local LANCE = 6 -- app.WeaponDef.TYPE
 local WYVERNS_FIRE_ACTIONS = { cRyuugekiStart = true, cRyuugekiIdle = true, cRyuugekiShoot = true }
 -- app.HunterDef.ACTION_START_TURN_TYPE: the _AIM variants turn towards the camera.
 local START_TURN_FOR_AIM = { [3] = 1, [4] = 2 } -- LV1_AIM -> LV1, LV2_AIM -> LV2
@@ -559,10 +560,68 @@ local function read_focus_state(hunter)
     }
 end
 
+-- Test builds: how far each Lance poke moves the hunter, forward and sideways from where they faced,
+-- and how that relates to the nearest monster. The monster list is read as in kmy0's HudController
+-- (app.EnemyManager._EnemyList, cEnemyManageInfo:get_Pos()).
+local LANCE_POKES = { cStab1 = true, cStab2 = true, cStab3 = true, cStabUp1 = true, cStabUp2 = true, cStabUp3 = true }
+local poke_start = nil
+
+local function nearest_monster_position(position)
+    local nearest, nearest_distance = nil, math.huge
+    local enemies = sdk.get_managed_singleton("app.EnemyManager")._EnemyList:get_Array()
+    for i = 0, enemies:get_size() - 1 do
+        local enemy = enemies:get_element(i)
+        if enemy then
+            local distance = (enemy:get_Pos() - position):length()
+            if distance < nearest_distance then
+                nearest, nearest_distance = enemy:get_Pos(), distance
+            end
+        end
+    end
+    return nearest
+end
+
+local function flat_angle_degrees(from, to)
+    return math.deg(math.atan(to.x - from.x, to.z - from.z))
+end
+
+local function start_poke(hunter, action_name)
+    local position = hunter:get_Pos()
+    local forward = hunter:get_GameObject():get_Transform():get_AxisZ()
+    local device = sdk.call_native_func(sdk.get_native_singleton("via.hid.GamePad"), GAMEPAD_TYPE, "get_MergedDevice")
+    poke_start = { action = action_name, position = position, forward = forward,
+        stick = device and device:get_AxisL() or Vector2f.new(0, 0), monster = nearest_monster_position(position) }
+end
+
+local function log_poke_movement(hunter)
+    local start = poke_start
+    poke_start = nil
+    local moved = hunter:get_Pos() - start.position
+    local flat_forward = Vector3f.new(start.forward.x, 0, start.forward.z):normalized()
+    local along = moved.x * flat_forward.x + moved.z * flat_forward.z
+    local sideways = moved.x * flat_forward.z - moved.z * flat_forward.x
+    local monster_text = "no monster"
+    if start.monster then
+        local facing = math.deg(math.atan(flat_forward.x, flat_forward.z))
+        local monster_angle = (flat_angle_degrees(start.position, start.monster) - facing + 540) % 360 - 180
+        local move_angle = (flat_angle_degrees(start.position, hunter:get_Pos()) - facing + 540) % 360 - 180
+        monster_text = string.format("monster %.2f -> %.2f m at %.0f deg, move at %.0f deg",
+            (start.monster - start.position):length(), (start.monster - hunter:get_Pos()):length(), monster_angle, move_angle)
+    end
+    log_line(string.format("poke %s forward %.2f m sideways %.2f m stick (%.2f, %.2f) %s",
+        start.action, along, sideways, start.stick.x, start.stick.y, monster_text))
+end
+
+local function track_lance_poke(hunter, action_name)
+    if poke_start then log_poke_movement(hunter) end
+    if hunter:get_WeaponType() == LANCE and LANCE_POKES[action_name] then start_poke(hunter, action_name) end
+end
+
 local function log_state_changes(hunter)
     local state = read_focus_state(hunter)
     if state.action ~= last_state.action then
         log_line("action " .. state.action)
+        track_lance_poke(hunter, current_action_name(hunter))
     end
     if state.is_aim ~= last_state.is_aim or state.aim_type ~= last_state.aim_type then
         log_line(string.format("focus is_aim=%s aim_type=%d", tostring(state.is_aim), state.aim_type))
