@@ -39,7 +39,7 @@ local WYVERNS_FIRE_CAMERA = 2
 local WYVERNS_FIRE_STICK = 3
 
 local settings = {
-    log_state = true, -- false in releases
+    log_state = false,
     focus_strike_only = true,
     no_aim_turning = true,
     wounds_only_while_focus_held = true,
