@@ -39,7 +39,7 @@ local WYVERNS_FIRE_CAMERA = 2
 local WYVERNS_FIRE_STICK = 3
 
 local settings = {
-    log_state = false,
+    log_state = true, -- false in releases
     focus_strike_only = true,
     no_aim_turning = true,
     wounds_only_while_focus_held = true,
@@ -122,10 +122,13 @@ end
 -- and only the address is kept, so no hook calls into an object from an earlier frame.
 local master_hunter_address = nil
 local hide_focus_reticle_now = false
+-- The master's Gunlance action on the previous frame, to tell a second Wyvern's Fire shot from a new one.
+local master_gunlance_action = nil
 
 re.on_frame(function()
     local master = get_master_hunter()
     master_hunter_address = master and master:get_address() or nil
+    master_gunlance_action = master and master:get_WeaponType() == GUNLANCE and current_action_name(master) or nil
     local melee_drawn = master ~= nil and is_melee(master) and not is_camera_aimed_wyverns_fire(master) and master:get_IsWeaponOn()
     hide_focus_reticle_now = settings.hide_focus_reticle and settings.focus_strike_only and melee_drawn
 end)
@@ -380,12 +383,17 @@ end)
 -- The game's camera reset, the one the camera reset button does, turns the camera behind the hunter
 -- when Wyvern's Fire starts. The camera is reached through app.CameraManager._MasterPlCamera as in
 -- DerKleineLi's MHWs-MIGGA (pandora.lua), and the hook on the action's doEnter follows lingsamuel's
--- Smart Focus Attack.
+-- Smart Focus Attack. A second shot starts straight from cRyuugekiShoot with the camera already behind
+-- the hunter, so it is not reset again (a reset there can put the camera inside a monster next to the hunter).
 local CAMERA_RESET_BEHIND_HUNTER = 1 -- app.cPlayerCameraCommandOperator.RESET_TYPE RESET
 
 sdk.hook(sdk.find_type_definition("app.Wp07Action.cRyuugekiStart"):get_method("doEnter"), function(args)
     local hunter = sdk.to_managed_object(args[2]):get_Chara()
     if settings.wyverns_fire_mode ~= WYVERNS_FIRE_CAMERA or not is_master_hunter(hunter) then return end
+    if master_gunlance_action == "cRyuugekiShoot" then
+        log_line("second Wyvern's Fire shot, camera left as it is")
+        return
+    end
     local player_camera = sdk.get_managed_singleton("app.CameraManager")._MasterPlCamera
     player_camera:get_CommandOperator():call("requestReset(app.cPlayerCameraCommandOperator.RESET_TYPE)",
         CAMERA_RESET_BEHIND_HUNTER)
